@@ -5,8 +5,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem?
     var cancellable: AnyCancellable?
     var timer: Timer?
-
-    // Set API URL here or fetch it from a config.
     let apiURL = URL(string: "https://api.waqi.info/feed/limassol/?token=123")!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -36,15 +34,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func fetchDataAndUpdateStatusBar() {
-        // Use apiURL directly since it is non-optional
-        let url = apiURL
-        
-        cancellable = URLSession.shared.dataTaskPublisher(for: url)
-            .map { $0.data }
+        let sessionConfig = URLSessionConfiguration.default
+        sessionConfig.waitsForConnectivity = true  // Ensure it waits if the network is temporarily unavailable
+        let session = URLSession(configuration: sessionConfig)
+
+        cancellable = session.dataTaskPublisher(for: apiURL)
+            .tryMap { (data, response) -> Data in
+                guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                    throw URLError(.badServerResponse)
+                }
+                return data
+            }
             .decode(type: YourAPIResponse.self, decoder: JSONDecoder())
             .sink(receiveCompletion: { completion in
                 if case let .failure(error) = completion {
-                    print("Error fetching data:", error)
+                    print("Error fetching data:", error.localizedDescription)
                 }
             }, receiveValue: { [weak self] response in
                 DispatchQueue.main.async {
@@ -53,6 +57,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             })
     }
+
 
 
     func startPolling() {
