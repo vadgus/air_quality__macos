@@ -56,7 +56,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
 
     func startPolling() {
-        timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
             self?.fetchDataAndUpdateStatusBar()
         }
     }
