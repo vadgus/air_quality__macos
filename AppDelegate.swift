@@ -1,6 +1,26 @@
 import AppKit
 import Combine
 
+class ClickableLinkTextField: NSTextField {
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        self.addTrackingArea(NSTrackingArea(
+            rect: self.bounds,
+            options: [.activeAlways, .mouseEnteredAndExited],
+            owner: self,
+            userInfo: nil
+        ))
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        NSCursor.pointingHand.push() // Меняем курсор на палец
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        NSCursor.arrow.pop() // Возвращаем стандартный курсор
+    }
+}
+
 class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem?
     var cancellable: AnyCancellable?
@@ -39,7 +59,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         alert.messageText = "Settings"
         alert.informativeText = "Enter your city and API token. To get a token, register at the following link:"
 
-        let linkLabel = NSTextField()
+        let linkLabel = ClickableLinkTextField()
         linkLabel.isEditable = false
         linkLabel.isBordered = false
         linkLabel.backgroundColor = .clear
