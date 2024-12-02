@@ -202,6 +202,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate {
             latitude: userSettings.latitude ?? 0.0,
             longitude: userSettings.longitude ?? 0.0
         )
+        // https://api.waqi.info/feed/limassol/?token=123
         let apiURLString = "https://api.waqi.info/feed/geo:\(coordinates.latitude);\(coordinates.longitude)/?token=\(token)"
         guard let apiURL = URL(string: apiURLString) else { return }
 
