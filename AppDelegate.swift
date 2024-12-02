@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import CoreLocation
 
 class ClickableLinkTextField: NSTextField {
     override func updateTrackingAreas() {
@@ -13,19 +14,30 @@ class ClickableLinkTextField: NSTextField {
     }
 
     override func mouseEntered(with event: NSEvent) {
-        NSCursor.pointingHand.push() // Меняем курсор на палец
+        NSCursor.pointingHand.push()
     }
 
     override func mouseExited(with event: NSEvent) {
-        NSCursor.arrow.pop() // Возвращаем стандартный курсор
+        NSCursor.arrow.pop()
     }
 }
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+struct APIResponse: Decodable {
+    let data: DataSection
+
+    struct DataSection: Decodable {
+        let aqi: Int
+    }
+}
+
+class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate {
     var statusItem: NSStatusItem?
     var cancellable: AnyCancellable?
     var timer: Timer?
     var isUpdating = false
+
+    var locationManager = CLLocationManager()
+    var lastKnownCoordinates: CLLocationCoordinate2D?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -44,10 +56,75 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "Settings", action: #selector(openSettings), keyEquivalent: "s"))
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q"))
         statusItem?.menu = menu
+
+        setupLocationManager()
+    }
+
+    func setupLocationManager() {
+        locationManager.delegate = self
+
+        let status = locationManager.authorizationStatus
+        handleLocationAuthorizationStatus(status)
+
+        if status == .notDetermined {
+            locationManager.requestWhenInUseAuthorization()
+        } else if status == .denied || status == .restricted {
+            notifyPermissionRequired()
+        }
+    }
+
+    func notifyPermissionRequired() {
+        let alert = NSAlert()
+        alert.messageText = "Location Permission Required"
+        alert.informativeText = """
+        This app requires location access to fetch air quality data. 
+        Please enable location permissions in System Preferences > Security & Privacy > Location Services.
+        """
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
+    func handleLocationAuthorizationStatus(_ status: CLAuthorizationStatus) {
+        switch status {
+        case .authorizedAlways:
+            locationManager.startUpdatingLocation()
+        case .denied, .restricted:
+            DispatchQueue.main.async {
+                self.statusItem?.button?.title = "Location permission required"
+            }
+        case .notDetermined:
+            break
+        @unknown default:
+            fatalError("Unhandled authorization status")
+        }
+    }
+
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        let status = manager.authorizationStatus
+        handleLocationAuthorizationStatus(status)
+    }
+    
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard let location = locations.last else { return }
+        lastKnownCoordinates = location.coordinate
+        saveUserSettings(latitude: location.coordinate.latitude, longitude: location.coordinate.longitude)
+    }
+
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        print("Failed to get location:", error.localizedDescription)
     }
 
     @objc func updateOnClick() {
-        fetchDataAndUpdateStatusBar()
+        let status = locationManager.authorizationStatus
+
+        if status == .authorizedAlways {
+            fetchDataAndUpdateStatusBar()
+        } else {
+            DispatchQueue.main.async {
+                self.statusItem?.button?.title = "Location permission required"
+            }
+        }
     }
 
     @objc func quitApp() {
@@ -57,7 +134,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func openSettings() {
         let alert = NSAlert()
         alert.messageText = "Settings"
-        alert.informativeText = "Enter your city and API token. To get a token, register at the following link:"
+        alert.informativeText = "Enter your API token. To get a token, register at the following link:"
 
         let linkLabel = ClickableLinkTextField()
         linkLabel.isEditable = false
@@ -72,13 +149,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         linkLabel.attributedStringValue = attributedString
         linkLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        let spacerView = NSView()
-        spacerView.translatesAutoresizingMaskIntoConstraints = false
-
-        let cityField = NSTextField(string: loadUserSettings().city ?? "")
-        cityField.placeholderString = "City"
-        cityField.translatesAutoresizingMaskIntoConstraints = false
-
         let tokenField = NSTextField(string: loadUserSettings().token ?? "")
         tokenField.placeholderString = "Token"
         tokenField.translatesAutoresizingMaskIntoConstraints = false
@@ -87,37 +157,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         containerView.translatesAutoresizingMaskIntoConstraints = false
 
         containerView.addSubview(linkLabel)
-        containerView.addSubview(spacerView)
-        containerView.addSubview(cityField)
         containerView.addSubview(tokenField)
 
         NSLayoutConstraint.activate([
             linkLabel.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 10),
             linkLabel.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 10),
             linkLabel.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -10),
-            spacerView.topAnchor.constraint(equalTo: linkLabel.bottomAnchor, constant: 5),
-            spacerView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
-            spacerView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
-            spacerView.heightAnchor.constraint(equalToConstant: 10),
-            cityField.topAnchor.constraint(equalTo: spacerView.bottomAnchor, constant: 10),
-            cityField.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 10),
-            cityField.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -10),
-            cityField.heightAnchor.constraint(equalToConstant: 24),
-            tokenField.topAnchor.constraint(equalTo: cityField.bottomAnchor, constant: 10),
+            tokenField.topAnchor.constraint(equalTo: linkLabel.bottomAnchor, constant: 10),
             tokenField.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 10),
             tokenField.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -10),
             tokenField.heightAnchor.constraint(equalToConstant: 24),
             tokenField.bottomAnchor.constraint(equalTo: containerView.bottomAnchor, constant: -10)
         ])
 
-        containerView.setFrameSize(NSSize(width: 255, height: 110))
+        containerView.setFrameSize(NSSize(width: 255, height: 50))
         alert.accessoryView = containerView
 
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
 
         if alert.runModal() == .alertFirstButtonReturn {
-            saveUserSettings(city: cityField.stringValue, token: tokenField.stringValue)
+            saveUserSettings(token: tokenField.stringValue)
             fetchDataAndUpdateStatusBar()
         }
     }
@@ -130,15 +190,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let userSettings = loadUserSettings()
-        guard let city = userSettings.city, !city.isEmpty,
-              let token = userSettings.token, !token.isEmpty,
-              let apiURL = URL(string: "https://api.waqi.info/feed/\(city)/?token=\(token)") else {
+        guard let token = userSettings.token, !token.isEmpty else {
             DispatchQueue.main.async {
                 self.statusItem?.button?.title = "Invalid config"
             }
             isUpdating = false
             return
         }
+
+        let coordinates = lastKnownCoordinates ?? CLLocationCoordinate2D(
+            latitude: userSettings.latitude ?? 0.0,
+            longitude: userSettings.longitude ?? 0.0
+        )
+        let apiURLString = "https://api.waqi.info/feed/geo:\(coordinates.latitude);\(coordinates.longitude)/?token=\(token)"
+        guard let apiURL = URL(string: apiURLString) else { return }
 
         let sessionConfig = URLSessionConfiguration.default
         sessionConfig.waitsForConnectivity = true
@@ -181,39 +246,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         cancellable?.cancel()
     }
 
-    func saveUserSettings(city: String, token: String) {
-        UserDefaults.standard.set(city, forKey: "city")
-        UserDefaults.standard.set(token, forKey: "token")
+    func saveUserSettings(latitude: Double? = nil, longitude: Double? = nil, token: String? = nil) {
+        if let latitude = latitude { UserDefaults.standard.set(latitude, forKey: "latitude") }
+        if let longitude = longitude { UserDefaults.standard.set(longitude, forKey: "longitude") }
+        if let token = token { UserDefaults.standard.set(token, forKey: "token") }
     }
 
-    func loadUserSettings() -> (city: String?, token: String?) {
-        let city = UserDefaults.standard.string(forKey: "city")
+    func loadUserSettings() -> (latitude: Double?, longitude: Double?, token: String?) {
+        let latitude = UserDefaults.standard.double(forKey: "latitude")
+        let longitude = UserDefaults.standard.double(forKey: "longitude")
         let token = UserDefaults.standard.string(forKey: "token")
-        return (city, token)
+        return (latitude == 0 ? nil : latitude, longitude == 0 ? nil : longitude, token)
     }
-}
-
-extension NSTextField {
-    var maxLength: Int {
-        get { return 0 }
-        set {
-            target = self
-            action = #selector(limitTextLength)
-        }
-    }
-
-    @objc private func limitTextLength() {
-        guard let stringValue = self.stringValue as NSString? else { return }
-        if stringValue.length > maxLength {
-            self.stringValue = stringValue.substring(to: maxLength)
-        }
-    }
-}
-
-struct APIResponse: Codable {
-    struct Data: Codable {
-        let aqi: Int
-    }
-    let status: String
-    let data: Data
 }
