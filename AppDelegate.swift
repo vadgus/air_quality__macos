@@ -88,13 +88,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate {
     func handleLocationAuthorizationStatus(_ status: CLAuthorizationStatus) {
         switch status {
         case .authorizedAlways:
-            locationManager.startUpdatingLocation()
+            locationManager.requestLocation()
         case .denied, .restricted:
             DispatchQueue.main.async {
                 self.statusItem?.button?.title = "Location permission required"
             }
+            notifyPermissionRequired()
         case .notDetermined:
-            break
+            locationManager.requestWhenInUseAuthorization()
         @unknown default:
             fatalError("Unhandled authorization status")
         }
@@ -185,9 +186,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate {
     func fetchDataAndUpdateStatusBar() {
         guard !isUpdating else { return }
         isUpdating = true
-        DispatchQueue.main.async {
-            self.statusItem?.button?.title = "."
-        }
 
         let userSettings = loadUserSettings()
         guard let token = userSettings.token, !token.isEmpty else {
@@ -202,7 +200,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate {
             latitude: userSettings.latitude ?? 0.0,
             longitude: userSettings.longitude ?? 0.0
         )
-        // https://api.waqi.info/feed/limassol/?token=123
         let apiURLString = "https://api.waqi.info/feed/geo:\(coordinates.latitude);\(coordinates.longitude)/?token=\(token)"
         guard let apiURL = URL(string: apiURLString) else { return }
 
