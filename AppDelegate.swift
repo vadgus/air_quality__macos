@@ -38,6 +38,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate {
 
     var locationManager = CLLocationManager()
     var lastKnownCoordinates: CLLocationCoordinate2D?
+    var previousLocation: CLLocation?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -54,6 +55,27 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate {
 
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "Settings", action: #selector(openSettings), keyEquivalent: "s"))
+        menu.addItem(NSMenuItem(title: "Update", action: #selector(updateLocation), keyEquivalent: ""))
+        let intervalMenu = NSMenu(title: "Update Interval")
+        let intervals = [
+            ("5m", 300.0),
+            ("10m", 600.0),
+            ("15m", 900.0),
+            ("30m", 1800.0),
+            ("1h", 3600.0),
+            ("3h", 10800.0),
+            ("6h", 21600.0),
+            ("24h", 86400.0)
+        ]
+        for (label, interval) in intervals {
+            let item = NSMenuItem(title: label, action: #selector(setInterval(_:)), keyEquivalent: "")
+            item.tag = Int(interval)
+            item.state = interval == 3600.0 ? .on : .off // Default to 1h
+            intervalMenu.addItem(item)
+        }
+        let intervalItem = NSMenuItem(title: "Interval", action: nil, keyEquivalent: "")
+        intervalItem.submenu = intervalMenu
+        menu.addItem(intervalItem)
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q"))
         statusItem?.menu = menu
 
@@ -62,6 +84,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate {
 
     func setupLocationManager() {
         locationManager.delegate = self
+        locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
 
         let status = locationManager.authorizationStatus
         handleLocationAuthorizationStatus(status)
@@ -87,7 +110,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate {
 
     func handleLocationAuthorizationStatus(_ status: CLAuthorizationStatus) {
         switch status {
+        case .authorized:
+            locationManager.requestLocation()
         case .authorizedAlways:
+            // Treat as authorized on macOS
             locationManager.requestLocation()
         case .denied, .restricted:
             DispatchQueue.main.async {
@@ -108,8 +134,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate {
     
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.last else { return }
+        if let prevLoc = previousLocation {
+            let distance = location.distance(from: prevLoc)
+            if distance < 100 { // Update only if movement exceeds 100 meters
+                return
+            }
+        }
+        previousLocation = location
         lastKnownCoordinates = location.coordinate
         saveUserSettings(latitude: location.coordinate.latitude, longitude: location.coordinate.longitude)
+        fetchDataAndUpdateStatusBar()
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
@@ -119,7 +153,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate {
     @objc func updateOnClick() {
         let status = locationManager.authorizationStatus
 
-        if status == .authorizedAlways {
+        if status == .authorized || status == .authorizedAlways {
             fetchDataAndUpdateStatusBar()
         } else {
             DispatchQueue.main.async {
@@ -234,9 +268,28 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate {
     }
 
     func startPolling() {
-        timer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: 900, repeats: true) { [weak self] _ in
             self?.fetchDataAndUpdateStatusBar()
         }
+    }
+
+    @objc func setInterval(_ sender: NSMenuItem) {
+        if let menu = statusItem?.menu {
+            for item in menu.item(at: 2)?.submenu?.items ?? [] {
+                item.state = .off
+            }
+            sender.state = .on
+            let interval = TimeInterval(sender.tag)
+            timer?.invalidate()
+            timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+                self?.fetchDataAndUpdateStatusBar()
+            }
+        }
+    }
+
+    @objc func updateLocation() {
+        locationManager.requestLocation()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
